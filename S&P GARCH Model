@@ -1,0 +1,76 @@
+import yfinance as yf
+import pandas as pd
+import matplotlib.pyplot as plt
+from arch import arch_model
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+import numpy as np
+from sklearn.metrics import mean_squared_error
+from datetime import timedelta  # Import timedelta
+
+# Define the ticker symbol
+tickerSymbol = 'GOLD'
+tickerData = yf.Ticker(tickerSymbol)
+
+# Fetch historical data
+tickerDf = tickerData.history(interval='1d', start='2000-1-1', end='2023-12-30')
+close_prices = tickerDf['Close']
+returns = 100 * close_prices.pct_change().dropna()
+
+# Plot the returns
+plt.figure(figsize=(10, 4))
+plt.plot(close_prices)
+plt.ylabel('close price ', fontsize=16)
+plt.title(f'{tickerSymbol} close', fontsize=20)
+plt.show()
+
+# PACF of squared returns
+plot_pacf(returns**2)
+plt.show()
+
+# Fit the GARCH(1,1) model
+garch_model = arch_model(returns, vol='Garch', p=1, q=1, mean='zero')
+garch_fitted = garch_model.fit(disp="off")
+print(garch_fitted.summary())
+
+# Rolling forecast with GARCH(1,1) model
+rolling_predictions = []
+test_size = 365 * 5  # Last 5 years
+
+for i in range(test_size):
+    train = returns[:-(test_size-i)]
+    model = arch_model(train, p=1, q=1)
+    model_fit = model.fit(disp='off')
+    pred = model_fit.forecast(horizon=1)
+    rolling_predictions.append(np.sqrt(pred.variance.values[-1, :][0]))
+
+# Convert rolling predictions to Pandas Series
+rolling_predictions = pd.Series(rolling_predictions, index=returns.index[-365*5:])
+
+# Approximate actual volatility using rolling standard deviation (2-day window)
+actual_volatility = returns[-365*5:].rolling(window=2).std()
+
+# Plot true returns vs predicted volatility
+plt.figure(figsize=(10, 4))
+true, = plt.plot(actual_volatility, label='Actual Volatility')
+preds, = plt.plot(rolling_predictions, label='Predicted Volatility')
+plt.title('Volatility Prediction - Rolling Forecast', fontsize=20)
+plt.legend(['Actual Volatility', 'Predicted Volatility'], fontsize=16)
+plt.show()
+
+# GARCH(1,1) model for future 7-day forecast
+train = returns
+model = arch_model(train, p=1, q=1)
+model_fit = model.fit(disp='off')
+pred = model_fit.forecast(horizon=7)
+
+# Create future dates for the next 7 days
+future_dates = [returns.index[-1] + timedelta(days=i) for i in range(1, 8)]
+pred = pd.Series(np.sqrt(pred.variance.values[-1, :]), index=future_dates)
+
+# Calculate RMSE between actual and predicted volatility
+# Ensure the lengths of actual_volatility and rolling_predictions match for RMSE calculation
+actual_volatility = actual_volatility.dropna()
+rolling_predictions = rolling_predictions.loc[actual_volatility.index]
+
+rmse = np.sqrt(mean_squared_error(actual_volatility, rolling_predictions))
+print(f'RMSE between predicted volatility and actual volatility: {rmse:.4f}')
