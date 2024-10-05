@@ -23,15 +23,15 @@ Out_Sample = 100 * close_prices_out.pct_change().dropna()
 
 
 # Plot the returns
-#plt.figure(figsize=(10, 4))
-#plt.plot(In_Sample)
-#plt.ylabel('Percentage Return', fontsize=16)
-#plt.title(f'{tickerSymbol} Returns', fontsize=20)
-#plt.show()
+plt.figure(figsize=(10, 4))
+plt.plot(In_Sample)
+plt.ylabel('Percentage Return', fontsize=16)
+plt.title(f'{tickerSymbol} Returns', fontsize=20)
+plt.show()
 
 # PACF of squared returns
-#plot_pacf(In_Sample**2)
-#plt.show()
+plot_pacf(In_Sample**2)
+plt.show()
 
 # Fit the GARCH(1,1) model
 garch_model = arch_model(In_Sample, vol='Garch', p=1, q=1, mean='zero', dist='skewt')
