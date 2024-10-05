@@ -1,0 +1,84 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from arch import arch_model
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error
+from math import sqrt
+
+# Load the Excel file
+Data = pd.read_excel(r'C:\Users\Ägaren\Desktop\My Python Learning\DataGold.xlsx',
+                     sheet_name='Data', index_col=0, parse_dates=True)
+
+# Split the data
+In_Sample_Data = Data.loc['2000-01-04':'2023-10-03', ['Close']]
+Out_Sample_Data = Data.loc['2023-10-04':'2024-10-06', ['Close']]
+
+# Calculate log returns
+In_Sample_Data['R_XAU'] = np.log(In_Sample_Data['Close'] / In_Sample_Data['Close'].shift(1))
+In_Sample_Data.dropna(inplace=True)
+
+Out_Sample_Data['R_XAU'] = np.log(Out_Sample_Data['Close'] / Out_Sample_Data['Close'].shift(1))
+Out_Sample_Data.dropna(inplace=True)
+
+# Scale the data
+scaler = StandardScaler()
+In_Sample_Data['R_XAU_Scaled'] = scaler.fit_transform(In_Sample_Data[['R_XAU']])
+Out_Sample_Data['R_XAU_Scaled'] = scaler.transform(Out_Sample_Data[['R_XAU']])
+
+# Fit GARCH model
+garch_model_xau = arch_model(In_Sample_Data['R_XAU_Scaled'], vol='Garch', p=1, q=1, mean='Zero', dist='skewt')
+garch_fitted_xau = garch_model_xau.fit(disp='off')
+print(garch_fitted_xau.summary())
+
+# Perform rolling window forecast for model evaluation
+rolling_predictions = []
+test_size = 250 * 10  # Last 5 years
+
+for i in range(test_size):
+    train = In_Sample_Data['R_XAU_Scaled'][:-(test_size-i)]
+    model = arch_model(train, vol='Garch', p=1, q=1, mean='Zero', dist='skewt')
+    model_fit = model.fit(disp='off')
+    pred = model_fit.forecast(horizon=1)
+    rolling_predictions.append(np.sqrt(pred.variance.values[-1, :][0]))
+
+# Convert rolling predictions to Pandas Series
+rolling_predictions = pd.Series(rolling_predictions, index=In_Sample_Data.index[-test_size:])
+
+# Calculate RMSE
+actual_volatility = In_Sample_Data['R_XAU_Scaled'][-test_size:]
+rmse = sqrt(mean_squared_error(actual_volatility.abs(), rolling_predictions))
+print(f"RMSE: {rmse}")
+
+# Plot in-sample rolling forecast vs actual
+plt.figure(figsize=(12, 6))
+plt.plot(actual_volatility.abs(), label='Actual Volatility', color='blue')
+plt.plot(rolling_predictions, label='Predicted Volatility', color='red')
+plt.title('In-sample Volatility Prediction - Rolling Forecast', fontsize=16)
+plt.xlabel('Date')
+plt.ylabel('Volatility')
+plt.legend(fontsize=12)
+plt.show()
+
+# Forecast for the out-of-sample period
+forecast_horizon = len(Out_Sample_Data)
+forecast = garch_fitted_xau.forecast(horizon=forecast_horizon)
+
+# Extract the forecasted volatility
+forecasted_volatility = np.sqrt(forecast.variance.values[-1, :])
+
+# Create a DataFrame with the forecasted volatility
+forecast_df = pd.DataFrame(forecasted_volatility, index=Out_Sample_Data.index, columns=['Forecasted_Volatility'])
+
+# Plot the forecasted volatility
+plt.figure(figsize=(12, 6))
+plt.plot(forecast_df['Forecasted_Volatility'])
+plt.title('Forecasted Volatility (2023-10-04 to 2024-10-06)', fontsize=16)
+plt.xlabel('Date')
+plt.ylabel('Volatility')
+plt.show()
+
+# Calculate and print average forecasted volatility
+avg_forecasted_volatility = forecast_df['Forecasted_Volatility'].mean()
+print(f"Average forecasted volatility: {avg_forecasted_volatility:.4f}")
+
