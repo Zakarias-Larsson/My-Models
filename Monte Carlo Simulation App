@@ -1,0 +1,134 @@
+library(openxlsx)
+library(forecast)
+library(ggplot2)
+library(quantmod)
+library(sn)
+library(shiny)
+library(shinydashboard)
+
+
+data <- read.xlsx("Guld Pris.xlsx")
+data$Date <- as.Date(data$Date, format = "%Y-%m-%d")
+data$Date <- as.Date(as.numeric(data$Date), origin = "1899-12-30")## The code that fixes the dates in Data 
+
+
+Price <-  data.frame(data$Price)
+Returns <-  data.frame(data$Log.Returns)
+
+
+initial_price <- Price[399, 1]
+initial_price
+
+
+
+
+# Define UI
+ui <- dashboardPage(
+  dashboardHeader(title = "Monte Carlo Simulation"),
+  
+  dashboardSidebar(
+    numericInput("initial_price", "Initial Price", value = initial_price),
+    numericInput("num_simulations", "Number of Simulations", value = 10000),
+    numericInput("time_horizon", "Time Horizon",min =0, value = 36, max =100),
+    numericInput("volatility", "Volatility", min = 0, max = 1, value = 0.05, step = 0.001),
+    numericInput("mean", "Mean", min = -0.5, max = 0.5, value = 0.002, step = 0.001),
+    selectInput("distribution", "Distribution",
+                choices = c("Normal", "Student T-Distribution", "Student Skewed"),
+                selected = "Normal"),
+    actionButton("simulate_button", "Simulate")
+  ),
+  
+  dashboardBody(
+    plotOutput("simulation_plot"),
+    
+    fluidRow(
+      box(
+        title = "Value at Risk",
+        status = "primary",
+        solidHeader = TRUE,
+        width = 6,
+        textOutput("VaR_output")
+      )
+    )
+  )
+)
+
+# Define server
+server <- function(input, output) {
+  
+  calculateVaR <- function(simulated_returns, alpha = c(0.1, 0.05, 0.01)) {
+    num_simulations <- ncol(simulated_returns)
+    time_horizon <- nrow(simulated_returns)
+    
+    sorted_returns <- apply(simulated_returns, 1, sort)
+    var_indices <- round((1 - alpha) * num_simulations)
+    VaR_values <- sapply(var_indices, function(index) sorted_returns[index, ])
+    mean_VaR <- colMeans(VaR_values)
+    
+    return(mean_VaR)
+  }
+  
+  observeEvent(input$simulate_button, {
+    num_simulations <- input$num_simulations
+    volatility <- input$volatility
+    mean <- input$mean
+    time_horizon <- input$time_horizon
+    initial_price <- input$initial_price
+    
+    simulated_returns <- matrix(NA, nrow = time_horizon, ncol = num_simulations)
+    
+    for (s in 1:num_simulations) {
+      simulated_returns[1, s] <- rnorm(1, mean, volatility)
+      
+      for (t in 2:time_horizon) {
+        if (input$distribution == "Normal") {
+          simulated_returns[t, s] <- rnorm(1, mean, volatility)
+        } else if (input$distribution == "Student T-Distribution") {
+          simulated_returns[t, s] <- rt(1, df = 5) * volatility
+        } else if (input$distribution == "Student Skewed") {
+          simulated_returns[t, s] <- rsn(1, xi = 2, omega = volatility, alpha = 0.8)
+        }
+      }
+    }
+    
+    initial_price 
+    
+    simulated_prices <- matrix(NA, nrow = time_horizon, ncol = num_simulations)
+    simulated_prices[1, ] <- initial_price
+    
+    for (t in 2:time_horizon) {
+      simulated_prices[t, ] <- simulated_prices[t - 1, ] * (1 + simulated_returns[t, ])
+    }
+    
+    # Plot the simulated prices
+    output$simulation_plot <- renderPlot({
+      plot_data <- data.frame(
+        t = rep(1:time_horizon, num_simulations),
+        price = as.vector(simulated_prices),
+        simulation = rep(1:num_simulations, each = time_horizon)
+      )
+      
+      plot_data$simulation <- as.factor(plot_data$simulation)
+      
+      ggplot(plot_data, aes(x = t, y = price, color = simulation)) +
+        geom_line() +
+        xlab("Time") +
+        ylab("Price") +
+        ggtitle("Monte Carlo Simulation") +
+        theme(legend.position = "none")
+    })
+    
+    # Calculate and render VaR output
+    output$VaR_output <- renderPrint({
+      VaR_values <- calculateVaR(simulated_returns)
+      
+      cat("Value at Risk:\n")
+      cat("VaR 0.1:", round(VaR_values[1], 2), "\n")
+      cat("VaR 0.05:", round(VaR_values[2], 2), "\n")
+      cat("VaR 0.01:", round(VaR_values[3], 2), "\n")
+    })
+  })
+}
+
+shinyApp(ui = ui, server = server)
+           
